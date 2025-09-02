@@ -7,8 +7,8 @@
 ## Installation Steps
 
 1. Install required packages:
+   ```
    pip install -r requirements.txt
-
 2. Prepare your data:
    - Place your CSV file with customer reviews in the project folder
    - Name it webmd_dataset.csv or update the FILE_PATH variable in the code
@@ -21,7 +21,7 @@
 
 1. Start the Streamlit server:
    ```bash
-           streamlit run app.py
+    streamlit run app.py
 2. Access the application:
    - Open your web browser
    - Go to http://localhost:8501 (the URL shown in your terminal)
