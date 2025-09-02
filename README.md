@@ -39,4 +39,4 @@
    - Download results as CSV
 
 ## Note
-The first run will download the language model (~80MB) which may take a few minutes.
+The first run will download the language model (~80MB) which may take a few minutes. 
