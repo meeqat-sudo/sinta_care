@@ -20,8 +20,8 @@
 ## Running the Application
 
 1. Start the Streamlit server:
-   streamlit run app.py
-
+   ```bash
+           streamlit run app.py
 2. Access the application:
    - Open your web browser
    - Go to http://localhost:8501 (the URL shown in your terminal)
