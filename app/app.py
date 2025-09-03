@@ -26,9 +26,9 @@ def load_model():
     """Load BERT model"""
     return SentenceTransformer('all-MiniLM-L6-v2')
 
-def add_logo_to_header(logo_path, width=None, height=None):
+def add_logo_to_sidebar(logo_path, width=None, height=None):
     """
-    Add a logo to the header with custom width and height.
+    Add a logo to the sidebar with custom width and height.
     
     Parameters:
     logo_path (str): Path to the logo image file
@@ -51,13 +51,13 @@ def add_logo_to_header(logo_path, width=None, height=None):
             new_width = int(height * aspect_ratio)
             logo = logo.resize((new_width, height), Image.LANCZOS)
         
-        # Display logo in header
-        st.image(logo)
+        # Display logo in sidebar
+        st.sidebar.image(logo)
         
     except FileNotFoundError:
-        st.error(f"Logo file not found: {logo_path}")
+        st.sidebar.error(f"Logo file not found: {logo_path}")
     except Exception as e:
-        st.error(f"Error loading logo: {str(e)}")
+        st.sidebar.error(f"Error loading logo: {str(e)}")
 
 @st.cache_data
 def find_reviews_column(df):
@@ -95,7 +95,7 @@ def show_topic_reviews(df, topic_name, text_col, n_reviews=5):
     """Show sample reviews for a specific topic"""
     topic_reviews = df[df['topic_name'] == topic_name][text_col].head(n_reviews)
     
-    st.subheader(f"📝 Sample Reviews for {topic_name}")
+    st.subheader(f"Sample Reviews for {topic_name}")
     for i, review in enumerate(topic_reviews, 1):
         st.write(f"**{i}.** {review}")
 
@@ -115,12 +115,12 @@ def get_topic_name(topic_model, topic_id):
 # Create page navigation
 def data_viewer_page(df_filtered):
     """Data Viewer Page"""
-    st.subheader("📊 Dataset Overview")
+    st.subheader("Dataset Overview")
     st.dataframe(df_filtered, use_container_width=True)
 
 def topic_analysis_page(df_filtered, reviews_col, filters):
     """Topic Analysis Page"""
-    st.header("📊 Topic Analysis & Visualizations")
+    st.header("Topic Analysis & Visualizations")
     
     # Use default topic modeling parameters
     n_topics = 5
@@ -142,7 +142,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
     # Store current filters for comparison next time
     st.session_state.previous_filters = str(filters)
     
-    if st.button("🚀 Run Topic Analysis", type="primary"):
+    if st.button("Run Topic Analysis", type="primary"):
         with st.spinner("Loading models..."):
             sentence_model = load_model()
         
@@ -182,11 +182,11 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
             st.session_state['df_with_topics'] = df_with_topics
             st.session_state['topic_names'] = topic_names
         
-        st.success("✅ Topic modeling completed!")
+        st.success("Topic modeling completed!")
     
     # Check if topic model exists
     if 'topic_model' not in st.session_state:
-        st.warning("⚠️ Please run topic analysis first using the button above.")
+        st.warning("Please run topic analysis first using the button above.")
         return
     
     topic_model = st.session_state['topic_model']
@@ -198,7 +198,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
     st.info(f"Showing results for {len(df_with_topics)} reviews with current filters")
     
     # Visualization controls
-    st.subheader("🎛️ Visualization Controls")
+    st.subheader("Visualization Controls")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -296,7 +296,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
                 show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
     
     # Topic distribution charts
-    st.subheader("📊 Topic Distribution")
+    st.subheader("Topic Distribution")
     
     # Filter out outlier topic for distribution
     valid_topics_df = df_with_topics[df_with_topics['topic'] != -1]
@@ -335,7 +335,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
             show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
     
     # Topic details
-    st.subheader("🔍 Topic Details")
+    st.subheader("Topic Details")
     
     # Get valid topics (excluding outliers)
     valid_topics = sorted([t for t in df_with_topics['topic'].unique() if t != -1])
@@ -363,7 +363,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
             st.write(f"**{i}.** {review}")
     
     # Summary statistics
-    st.subheader("📊 Summary Statistics")
+    st.subheader("Summary Statistics")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -377,7 +377,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
         st.metric("Largest Topic", f"{topic_counts.max()} reviews")
     
     # Download results
-    st.subheader("💾 Download Results")
+    st.subheader("Download Results")
     
     # Prepare download data
     download_df = df_with_topics[[reviews_col, 'topic', 'topic_name']].copy()
@@ -385,17 +385,17 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
     
     csv = download_df.to_csv(index=False)
     st.download_button(
-        label="📥 Download Results as CSV",
+        label="Download Results as CSV",
         data=csv,
         file_name="topic_modeling_results.csv",
         mime="text/csv"
     )
 
 def main():
-    # Add logo to header
-    add_logo_to_header(LOGO_PATH, width=50)
     
-    st.title("SintaCare – Feels personal and caring")
+    
+    # Add logo to sidebar
+    add_logo_to_sidebar(LOGO_PATH, width=50)
     
     # Create navigation using sidebar
     st.sidebar.title("Sinta.ai")
@@ -405,10 +405,10 @@ def main():
         st.session_state.page = "Data Viewer"
     
     # Create navigation buttons
-    if st.sidebar.button("📊 Data Viewer", use_container_width=True):
+    if st.sidebar.button("Data Viewer", use_container_width=True):
         st.session_state.page = "Data Viewer"
     
-    if st.sidebar.button("📈 Topic Analysis", use_container_width=True):
+    if st.sidebar.button("Topic Analysis", use_container_width=True):
         st.session_state.page = "Topic Analysis"
 
     try:
@@ -419,7 +419,7 @@ def main():
         reviews_col = find_reviews_column(df)
         
         if reviews_col is None:
-            st.error("❌ No text column found. Please select manually:")
+            st.error("No text column found. Please select manually:")
             reviews_col = st.selectbox("Select reviews column:", df.columns)
         
         # Clean data
@@ -427,44 +427,58 @@ def main():
         df_clean = df_clean[df_clean[reviews_col].astype(str).str.strip() != '']
         
         # Sidebar Filters
-        st.sidebar.subheader("🔍 Filters")
+        st.sidebar.subheader("Filters")
         filters = {}
-        
-        # Age filter - Dropdown menu
+        # Drug filter - Multi selector
+        drug_cols = [col for col in ['Drug', 'drug', 'drugName', 'drug_name'] if col in df_clean.columns]
+        if drug_cols:
+            drug_col = drug_cols[0]
+            # Remove empty/NaN values and get unique drugs
+            unique_drugs = sorted([drug for drug in df_clean[drug_col].dropna().unique() if str(drug).strip() != ''])
+            if len(unique_drugs) > 0:
+                selected_drugs = st.sidebar.multiselect(
+                    "Select Drugs:",
+                    unique_drugs,
+                    default=[]
+                )
+                if selected_drugs:
+                    filters[drug_col] = selected_drugs
+        # Age filter - Multi selector
         if 'Age' in df_clean.columns or 'age' in df_clean.columns:
             age_col = 'Age' if 'Age' in df_clean.columns else 'age'
             # Remove empty/NaN values and get unique ages
             unique_ages = sorted([age for age in df_clean[age_col].dropna().unique() if str(age).strip() != ''])
             if len(unique_ages) > 0:
-                selected_age = st.sidebar.selectbox(
-                    "Select Age:",
-                    ["All"] + list(unique_ages)
+                selected_ages = st.sidebar.multiselect(
+                    "Select Ages:",
+                    unique_ages,
+                    default=[]
                 )
-                if selected_age != "All":
-                    filters[age_col] = [selected_age]
+                if selected_ages:
+                    filters[age_col] = selected_ages
         
-        # Effectiveness filter - Slider with range 1-5
-        if 'Effectiveness' in df_clean.columns or 'effectiveness' in df_clean.columns:
-            eff_col = 'Effectiveness' if 'Effectiveness' in df_clean.columns else 'effectiveness'
+        # Satisfaction filter - Slider with range 1-5
+        if 'Satisfaction' in df_clean.columns or 'satisfaction' in df_clean.columns:
+            sat_col = 'Satisfaction' if 'Satisfaction' in df_clean.columns else 'satisfaction'
             
-            # Convert effectiveness column to numeric, handling any non-numeric values
-            df_clean[eff_col] = pd.to_numeric(df_clean[eff_col], errors='coerce')
+            # Convert satisfaction column to numeric, handling any non-numeric values
+            df_clean[sat_col] = pd.to_numeric(df_clean[sat_col], errors='coerce')
             
-            # Get the range of effectiveness values (should be 1-5)
-            min_eff = df_clean[eff_col].min()
-            max_eff = df_clean[eff_col].max()
+            # Get the range of satisfaction values (should be 1-5)
+            min_sat = df_clean[sat_col].min()
+            max_sat = df_clean[sat_col].max()
             
-            # Create slider for effectiveness range
-            eff_range = st.sidebar.slider(
-                "Select Effectiveness Range:",
-                min_value=int(min_eff) if not pd.isna(min_eff) else 1,
-                max_value=int(max_eff) if not pd.isna(max_eff) else 5,
-                value=(int(min_eff) if not pd.isna(min_eff) else 1, int(max_eff) if not pd.isna(max_eff) else 5),
+            # Create slider for satisfaction range
+            sat_range = st.sidebar.slider(
+                "Select Satisfaction Range:",
+                min_value=int(min_sat) if not pd.isna(min_sat) else 1,
+                max_value=int(max_sat) if not pd.isna(max_sat) else 5,
+                value=(int(min_sat) if not pd.isna(min_sat) else 1, int(max_sat) if not pd.isna(max_sat) else 5),
                 step=1
             )
             
             # Filter based on the selected range
-            filters[eff_col] = list(range(eff_range[0], eff_range[1] + 1))
+            filters[sat_col] = list(range(sat_range[0], sat_range[1] + 1))
         
         # Gender filter - Radio buttons
         gender_cols = [col for col in ['Gender', 'gender', 'Sex', 'sex'] if col in df_clean.columns]
@@ -482,6 +496,8 @@ def main():
                 if selected_gender != "All":
                     filters[gender_col] = [selected_gender]
         
+
+        
         # Apply filters
         if filters:
             df_filtered = get_filtered_data(df_clean, filters)
@@ -497,11 +513,9 @@ def main():
             topic_analysis_page(df_filtered, reviews_col, filters)
 
     except FileNotFoundError:
-        st.error(f"❌ File not found: {FILE_PATH}. Please make sure the file exists at the specified path.")
+        st.error(f"File not found: {FILE_PATH}. Please make sure the file exists at the specified path.")
     except Exception as e:
-        st.error(f"❌ Error loading file: {str(e)}")
+        st.error(f"Error loading file: {str(e)}")
 
 if __name__ == "__main__":
     main()
-
-    
