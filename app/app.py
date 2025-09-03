@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="Topic Modeling", layout="wide")
 
 # Hardcoded file path - replace with your actual file path
-FILE_PATH = "E:\\app\\POC\\webmd_dataset.csv"  # Change this to your actual file path
+FILE_PATH = "E:\\app\\POC\\dataset\\webmd_dataset.csv"  # Change this to your actual file path
 LOGO_PATH = "E:\\app\\POC\\logo.png"  # Change this to your logo file path
 
 @st.cache_resource
@@ -398,7 +398,7 @@ def main():
     st.title("SintaCare – Feels personal and caring")
     
     # Create navigation using sidebar
-    st.sidebar.title("Navigation")
+    st.sidebar.title("Sinta.ai")
     
     # Set default page
     if 'page' not in st.session_state:
@@ -503,3 +503,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
