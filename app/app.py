@@ -112,19 +112,75 @@ def get_topic_name(topic_model, topic_id):
         return " ".join(keywords)
     return f"Topic {topic_id}"
 
+def safe_dimensionality_reduction(embeddings, n_components=2, method='umap'):
+    """
+    Safely perform dimensionality reduction with fallback options
+    """
+    n_samples = embeddings.shape[0]
+    
+    # Check if we have enough samples for the requested components
+    if n_samples < n_components + 1:
+        st.warning(f"Dataset too small ({n_samples} samples) for {n_components}D visualization. Using PCA instead.")
+        # Use PCA as fallback for small datasets
+        from sklearn.decomposition import PCA
+        reducer = PCA(n_components=min(n_components, n_samples-1))
+        return reducer.fit_transform(embeddings)
+    
+    try:
+        if method == 'umap':
+            # Adjust UMAP parameters for small datasets
+            n_neighbors = min(15, max(2, n_samples // 3))  # Adaptive n_neighbors
+            min_dist = 0.1 if n_samples > 50 else 0.01     # Smaller min_dist for small datasets
+            
+            reducer = umap.UMAP(
+                n_components=n_components, 
+                random_state=42,
+                n_neighbors=n_neighbors,
+                min_dist=min_dist,
+                metric='cosine'  # Often works better for text embeddings
+            )
+            return reducer.fit_transform(embeddings)
+    except Exception as e:
+        st.warning(f"UMAP failed ({str(e)}). Using PCA as fallback.")
+        # Fallback to PCA
+        from sklearn.decomposition import PCA
+        reducer = PCA(n_components=min(n_components, n_samples-1))
+        return reducer.fit_transform(embeddings)
+
 # Create page navigation
 def data_viewer_page(df_filtered):
     """Data Viewer Page"""
     st.subheader("Dataset Overview")
     st.dataframe(df_filtered, use_container_width=True)
 
-def topic_analysis_page(df_filtered, reviews_col, filters):
+def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
     """Topic Analysis Page"""
     st.header("Topic Analysis & Visualizations")
     
-    # Use default topic modeling parameters
-    n_topics = 5
-    min_topic_size = 10
+    # Check dataset size
+    dataset_size = len(df_filtered)
+    if dataset_size < 10:
+        st.error("⚠️ Dataset too small for topic analysis. Please select more data or reduce filters.")
+        st.info(f"Current dataset size: {dataset_size} reviews. Minimum required: 10 reviews.")
+        return
+    
+    # Adaptive parameters based on dataset size
+    if dataset_size < 50:
+        n_topics = min(3, dataset_size // 5)  # Fewer topics for small datasets
+        min_topic_size = max(2, dataset_size // 10)  # Smaller minimum topic size
+        st.info(f"Small dataset detected ({dataset_size} reviews). Using {n_topics} topics with min_topic_size={min_topic_size}")
+    else:
+        n_topics = 5
+        min_topic_size = 10
+    
+    # Check if drugs are selected
+    if not selected_drugs:
+        st.warning("⚠️ Please select at least one drug from the filters in the sidebar before running topic analysis.")
+        st.info("Use the 'Select Drugs' filter in the sidebar to choose drugs for analysis.")
+        return
+    
+    # Show selected drugs info
+    st.info(f"Topic analysis will be performed for: {', '.join(selected_drugs)}")
     
     # Check if filters have changed since last run
     filters_changed = False
@@ -142,7 +198,25 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
     # Store current filters for comparison next time
     st.session_state.previous_filters = str(filters)
     
-    if st.button("Run Topic Analysis", type="primary"):
+    # Updated button with custom color
+    button_clicked = st.button("Run Topic Analysis", type="primary")
+    
+    # Apply custom CSS for button color
+    st.markdown("""
+    <style>
+    div.stButton > button:first-child {
+        background-color: #00FFFF !important;
+        color: #000000 !important;
+        border: 1px solid #00FFFF !important;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #00E6E6 !important;
+        border: 1px solid #00E6E6 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    if button_clicked:
         with st.spinner("Loading models..."):
             sentence_model = load_model()
         
@@ -150,8 +224,13 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
             # Get text data
             texts = df_filtered[reviews_col].astype(str).tolist()
             
-            # Create BERTopic model
-            vectorizer_model = CountVectorizer(stop_words="english", min_df=2, ngram_range=(1, 2))
+            # Create BERTopic model with adaptive parameters
+            vectorizer_model = CountVectorizer(
+                stop_words="english", 
+                min_df=max(1, min(2, dataset_size // 20)),  # Adaptive min_df
+                max_df=0.95, 
+                ngram_range=(1, 2)
+            )
             
             topic_model = BERTopic(
                 embedding_model=sentence_model,
@@ -208,98 +287,130 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
     
     # Create visualizations
     if viz_type == "2D Plot":
-        # Get embeddings for visualization
-        embeddings = topic_model._extract_embeddings(df_with_topics[reviews_col].tolist())
+        try:
+            # Get embeddings for visualization
+            embeddings = topic_model._extract_embeddings(df_with_topics[reviews_col].tolist())
+            
+            # Use safe dimensionality reduction
+            reduced_embeddings = safe_dimensionality_reduction(embeddings, n_components=2)
+            
+            # Create DataFrame for plotting
+            plot_df = pd.DataFrame({
+                'x': reduced_embeddings[:, 0],
+                'y': reduced_embeddings[:, 1],
+                'topic': topics,
+                'topic_name': df_with_topics['topic_name'],
+                'text': df_with_topics[reviews_col].str[:100] + "..."
+            })
+            
+            # Remove outlier topic (-1) for cleaner visualization
+            plot_df = plot_df[plot_df['topic'] != -1]
+            
+            if len(plot_df) == 0:
+                st.warning("No valid topics found for visualization. All data points are outliers.")
+                return
+            
+            # Create interactive plot
+            fig = px.scatter(
+                plot_df,
+                x='x',
+                y='y',
+                color='topic_name',
+                hover_data={'text': True, 'x': False, 'y': False},
+                title="Topic Clusters (2D Visualization)",
+                labels={'x': 'Component 1', 'y': 'Component 2', 'color': 'Topic'}
+            )
+            fig.update_traces(marker=dict(size=8, opacity=0.7))
+            
+            # Display plot
+            event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+            
+            # Show reviews when point is clicked
+            if show_reviews and event and 'selection' in event and event['selection']['points']:
+                selected_point = event['selection']['points'][0]
+                if 'customdata' in selected_point:
+                    # Find the topic of selected point
+                    point_index = selected_point['pointIndex']
+                    selected_topic_name = plot_df.iloc[point_index]['topic_name']
+                    show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
         
-        # Reduce dimensions
-        reducer = umap.UMAP(n_components=2, random_state=42)
-        reduced_embeddings = reducer.fit_transform(embeddings)
-        
-        # Create DataFrame for plotting
-        plot_df = pd.DataFrame({
-            'x': reduced_embeddings[:, 0],
-            'y': reduced_embeddings[:, 1],
-            'topic': topics,
-            'topic_name': df_with_topics['topic_name'],
-            'text': df_with_topics[reviews_col].str[:100] + "..."
-        })
-        
-        # Remove outlier topic (-1) for cleaner visualization
-        plot_df = plot_df[plot_df['topic'] != -1]
-        
-        # Create interactive plot
-        fig = px.scatter(
-            plot_df,
-            x='x',
-            y='y',
-            color='topic_name',
-            hover_data={'text': True, 'x': False, 'y': False},
-            title="Topic Clusters (2D Visualization)",
-            labels={'x': 'UMAP 1', 'y': 'UMAP 2', 'color': 'Topic'}
-        )
-        fig.update_traces(marker=dict(size=8, opacity=0.7))
-        
-        # Display plot
-        event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
-        
-        # Show reviews when point is clicked
-        if show_reviews and event and 'selection' in event and event['selection']['points']:
-            selected_point = event['selection']['points'][0]
-            if 'customdata' in selected_point:
-                # Find the topic of selected point
-                point_index = selected_point['pointIndex']
-                selected_topic_name = plot_df.iloc[point_index]['topic_name']
-                show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
+        except Exception as e:
+            st.error(f"Error creating 2D visualization: {str(e)}")
+            st.info("This might be due to the dataset being too small or sparse. Try selecting more data.")
     
     elif viz_type == "3D Plot":
-        # Get embeddings for visualization
-        embeddings = topic_model._extract_embeddings(df_with_topics[reviews_col].tolist())
+        try:
+            # Get embeddings for visualization
+            embeddings = topic_model._extract_embeddings(df_with_topics[reviews_col].tolist())
+            
+            # Use safe dimensionality reduction
+            reduced_embeddings = safe_dimensionality_reduction(embeddings, n_components=3)
+            
+            # Handle case where we get fewer components than requested
+            if reduced_embeddings.shape[1] < 3:
+                st.warning("Dataset too small for 3D visualization. Showing 2D instead.")
+                # Pad with zeros for 3D plot
+                if reduced_embeddings.shape[1] == 2:
+                    z_component = np.zeros((reduced_embeddings.shape[0], 1))
+                    reduced_embeddings = np.hstack([reduced_embeddings, z_component])
+                else:
+                    st.error("Unable to create 3D visualization with current dataset.")
+                    return
+            
+            # Create DataFrame for plotting
+            plot_df = pd.DataFrame({
+                'x': reduced_embeddings[:, 0],
+                'y': reduced_embeddings[:, 1],
+                'z': reduced_embeddings[:, 2],
+                'topic': topics,
+                'topic_name': df_with_topics['topic_name'],
+                'text': df_with_topics[reviews_col].str[:100] + "..."
+            })
+            
+            # Remove outlier topic (-1)
+            plot_df = plot_df[plot_df['topic'] != -1]
+            
+            if len(plot_df) == 0:
+                st.warning("No valid topics found for visualization. All data points are outliers.")
+                return
+            
+            # Create 3D plot
+            fig = px.scatter_3d(
+                plot_df,
+                x='x',
+                y='y',
+                z='z',
+                color='topic_name',
+                hover_data={'text': True, 'x': False, 'y': False, 'z': False},
+                title="Topic Clusters (3D Visualization)",
+                labels={'x': 'Component 1', 'y': 'Component 2', 'z': 'Component 3', 'color': 'Topic'}
+            )
+            
+            # Display plot
+            event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+            
+            # Show reviews when point is clicked
+            if show_reviews and event and 'selection' in event and event['selection']['points']:
+                selected_point = event['selection']['points'][0]
+                if 'customdata' in selected_point:
+                    point_index = selected_point['pointIndex']
+                    selected_topic_name = plot_df.iloc[point_index]['topic_name']
+                    show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
         
-        # Reduce dimensions
-        reducer = umap.UMAP(n_components=3, random_state=42)
-        reduced_embeddings = reducer.fit_transform(embeddings)
-        
-        # Create DataFrame for plotting
-        plot_df = pd.DataFrame({
-            'x': reduced_embeddings[:, 0],
-            'y': reduced_embeddings[:, 1],
-            'z': reduced_embeddings[:, 2],
-            'topic': topics,
-            'topic_name': df_with_topics['topic_name'],
-            'text': df_with_topics[reviews_col].str[:100] + "..."
-        })
-        
-        # Remove outlier topic (-1)
-        plot_df = plot_df[plot_df['topic'] != -1]
-        
-        # Create 3D plot
-        fig = px.scatter_3d(
-            plot_df,
-            x='x',
-            y='y',
-            z='z',
-            color='topic_name',
-            hover_data={'text': True, 'x': False, 'y': False, 'z': False},
-            title="Topic Clusters (3D Visualization)",
-            labels={'x': 'UMAP 1', 'y': 'UMAP 2', 'z': 'UMAP 3', 'color': 'Topic'}
-        )
-        
-        # Display plot
-        event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
-        
-        # Show reviews when point is clicked
-        if show_reviews and event and 'selection' in event and event['selection']['points']:
-            selected_point = event['selection']['points'][0]
-            if 'customdata' in selected_point:
-                point_index = selected_point['pointIndex']
-                selected_topic_name = plot_df.iloc[point_index]['topic_name']
-                show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
+        except Exception as e:
+            st.error(f"Error creating 3D visualization: {str(e)}")
+            st.info("This might be due to the dataset being too small or sparse. Try selecting more data.")
     
     # Topic distribution charts
     st.subheader("Topic Distribution")
     
     # Filter out outlier topic for distribution
     valid_topics_df = df_with_topics[df_with_topics['topic'] != -1]
+    
+    if len(valid_topics_df) == 0:
+        st.warning("No valid topics found. All data points are classified as outliers.")
+        return
+    
     topic_counts = valid_topics_df['topic_name'].value_counts()
     
     col1, col2 = st.columns(2)
@@ -340,27 +451,28 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
     # Get valid topics (excluding outliers)
     valid_topics = sorted([t for t in df_with_topics['topic'].unique() if t != -1])
     
-    # Let the user select a topic by name
-    selected_topic_name = st.selectbox("Select topic to explore:", list(topic_counts.index))
-    
-    if selected_topic_name:
-        # Get topic ID from name
-        selected_topic_id = df_with_topics[df_with_topics['topic_name'] == selected_topic_name]['topic'].iloc[0]
+    if len(topic_counts) > 0:
+        # Let the user select a topic by name
+        selected_topic_name = st.selectbox("Select topic to explore:", list(topic_counts.index))
         
-        # Get topic words
-        topic_words = topic_model.get_topic(selected_topic_id)
-        
-        if topic_words:
-            st.write(f"**Keywords:** {', '.join([word for word, _ in topic_words[:10]])}")
-        
-        # Show reviews for selected topic
-        topic_reviews = df_with_topics[df_with_topics['topic_name'] == selected_topic_name][reviews_col]
-        st.write(f"**Number of reviews:** {len(topic_reviews)}")
-        
-        # Display sample reviews
-        st.write("**Sample Reviews:**")
-        for i, review in enumerate(topic_reviews.head(5), 1):
-            st.write(f"**{i}.** {review}")
+        if selected_topic_name:
+            # Get topic ID from name
+            selected_topic_id = df_with_topics[df_with_topics['topic_name'] == selected_topic_name]['topic'].iloc[0]
+            
+            # Get topic words
+            topic_words = topic_model.get_topic(selected_topic_id)
+            
+            if topic_words:
+                st.write(f"**Keywords:** {', '.join([word for word, _ in topic_words[:10]])}")
+            
+            # Show reviews for selected topic
+            topic_reviews = df_with_topics[df_with_topics['topic_name'] == selected_topic_name][reviews_col]
+            st.write(f"**Number of reviews:** {len(topic_reviews)}")
+            
+            # Display sample reviews
+            st.write("**Sample Reviews:**")
+            for i, review in enumerate(topic_reviews.head(5), 1):
+                st.write(f"**{i}.** {review}")
     
     # Summary statistics
     st.subheader("Summary Statistics")
@@ -372,9 +484,15 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
         valid_topics_count = len(valid_topics)
         st.metric("Topics Found", valid_topics_count)
     with col3:
-        st.metric("Avg Reviews per Topic", f"{len(valid_topics_df)/valid_topics_count:.1f}")
+        if valid_topics_count > 0:
+            st.metric("Avg Reviews per Topic", f"{len(valid_topics_df)/valid_topics_count:.1f}")
+        else:
+            st.metric("Avg Reviews per Topic", "0")
     with col4:
-        st.metric("Largest Topic", f"{topic_counts.max()} reviews")
+        if len(topic_counts) > 0:
+            st.metric("Largest Topic", f"{topic_counts.max()} reviews")
+        else:
+            st.metric("Largest Topic", "0 reviews")
     
     # Download results
     st.subheader("Download Results")
@@ -392,8 +510,6 @@ def topic_analysis_page(df_filtered, reviews_col, filters):
     )
 
 def main():
-    
-    
     # Add logo to sidebar
     add_logo_to_sidebar(LOGO_PATH, width=50)
     
@@ -404,7 +520,22 @@ def main():
     if 'page' not in st.session_state:
         st.session_state.page = "Data Viewer"
     
-    # Create navigation buttons
+    # Create navigation buttons with custom styling
+    st.sidebar.markdown("""
+    <style>
+    .stButton button {
+        background-color: #00FFFF !important;
+        color: #000000 !important;
+        border: 1px solid #00FFFF !important;
+        width: 100% !important;
+    }
+    .stButton button:hover {
+        background-color: #00E6E6 !important;
+        border: 1px solid #00E6E6 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     if st.sidebar.button("Data Viewer", use_container_width=True):
         st.session_state.page = "Data Viewer"
     
@@ -429,6 +560,8 @@ def main():
         # Sidebar Filters
         st.sidebar.subheader("Filters")
         filters = {}
+        selected_drugs = []  # Initialize selected_drugs
+        
         # Drug filter - Multi selector
         drug_cols = [col for col in ['Drug', 'drug', 'drugName', 'drug_name'] if col in df_clean.columns]
         if drug_cols:
@@ -437,12 +570,14 @@ def main():
             unique_drugs = sorted([drug for drug in df_clean[drug_col].dropna().unique() if str(drug).strip() != ''])
             if len(unique_drugs) > 0:
                 selected_drugs = st.sidebar.multiselect(
-                    "Select Drugs:",
+                    "Select Drugs: *Required for Topic Analysis*",
                     unique_drugs,
-                    default=[]
+                    default=[],
+                    help="You must select at least one drug to perform topic analysis"
                 )
                 if selected_drugs:
                     filters[drug_col] = selected_drugs
+        
         # Age filter - Multi selector
         if 'Age' in df_clean.columns or 'age' in df_clean.columns:
             age_col = 'Age' if 'Age' in df_clean.columns else 'age'
@@ -496,8 +631,6 @@ def main():
                 if selected_gender != "All":
                     filters[gender_col] = [selected_gender]
         
-
-        
         # Apply filters
         if filters:
             df_filtered = get_filtered_data(df_clean, filters)
@@ -510,7 +643,7 @@ def main():
         if st.session_state.page == "Data Viewer":
             data_viewer_page(df_filtered)
         elif st.session_state.page == "Topic Analysis":
-            topic_analysis_page(df_filtered, reviews_col, filters)
+            topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs)
 
     except FileNotFoundError:
         st.error(f"File not found: {FILE_PATH}. Please make sure the file exists at the specified path.")
