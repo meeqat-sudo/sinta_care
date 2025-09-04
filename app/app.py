@@ -12,7 +12,15 @@ from bertopic import BERTopic
 from sklearn.feature_extraction.text import CountVectorizer
 import warnings
 from PIL import Image
+import os
+from dotenv import load_dotenv
+import openai
+from openai import OpenAI
+
 warnings.filterwarnings('ignore')
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set page config
 st.set_page_config(page_title="Topic Modeling", layout="wide")
@@ -20,6 +28,9 @@ st.set_page_config(page_title="Topic Modeling", layout="wide")
 # Hardcoded file path - replace with your actual file path
 FILE_PATH = "E:\\app\\POC\\dataset\\webmd_dataset.csv"  # Change this to your actual file path
 LOGO_PATH = "E:\\app\\POC\\logo.png"  # Change this to your logo file path
+
+# Get OpenAI API key from environment variables
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 @st.cache_resource
 def load_model():
@@ -147,6 +158,53 @@ def safe_dimensionality_reduction(embeddings, n_components=2, method='umap'):
         reducer = PCA(n_components=min(n_components, n_samples-1))
         return reducer.fit_transform(embeddings)
 
+def generate_topic_summary_gpt4(topic_name, topic_keywords, sample_reviews):
+    """
+    Generate a summary of a topic using OpenAI GPT-4
+    """
+    if not OPENAI_API_KEY:
+        st.error("OpenAI API key not found. Please add OPENAI_API_KEY to your .env file.")
+        return "OpenAI API key not configured."
+    
+    try:
+        openai.api_key = OPENAI_API_KEY
+        client = OpenAI()
+
+        # Prepare the prompt
+        prompt = f"""
+        Analyze the following topic cluster from medical reviews and provide a comprehensive summary:
+        
+        Topic Name: {topic_name}
+        Keywords: {', '.join(topic_keywords)}
+        
+        Sample Reviews:
+        {chr(10).join([f'{i+1}. {review}' for i, review in enumerate(sample_reviews)])}
+        
+        Please provide a concise yet comprehensive summary of this topic that includes:
+        1. The main themes or concerns expressed in these reviews
+        2. Common patterns or sentiments
+        3. Any notable insights about patient experiences
+        4. Potential implications for healthcare providers
+        
+        Keep the summary professional and focused on medical insights.
+        """
+        
+        # Call OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": "You aoe a medical data analyst specializing in summarizing patient review data."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.3
+        )
+        
+        return response.choices[0].message.content.strip()
+    
+    except Exception as e:
+        return f"Error generating summary: {str(e)}"
+
 # Create page navigation
 def data_viewer_page(df_filtered):
     """Data Viewer Page"""
@@ -193,6 +251,8 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
         del st.session_state['topics']
         del st.session_state['df_with_topics']
         del st.session_state['topic_names']
+        if 'topic_summaries' in st.session_state:
+            del st.session_state['topic_summaries']
         st.info("Filters changed. Please run topic analysis again.")
     
     # Store current filters for comparison next time
@@ -445,7 +505,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
             selected_topic_name = event_pie['selection']['points'][0]['label']
             show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
     
-    # Topic details
+    # Topic details with GPT-4 summaries
     st.subheader("Topic Details")
     
     # Get valid topics (excluding outliers)
@@ -469,10 +529,93 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
             topic_reviews = df_with_topics[df_with_topics['topic_name'] == selected_topic_name][reviews_col]
             st.write(f"**Number of reviews:** {len(topic_reviews)}")
             
+
+            
             # Display sample reviews
             st.write("**Sample Reviews:**")
-            for i, review in enumerate(topic_reviews.head(5), 1):
+            for i, review in enumerate(topic_reviews.head(6), 1):
                 st.write(f"**{i}.** {review}")
+            # Generate GPT-4 summary
+            if st.button("Generate Topic Summary", key=f"summary_{selected_topic_id}"):
+                with st.spinner("Generating AI summary with GPT-4..."):
+                    # Extract keywords
+                    topic_keywords = [word for word, _ in topic_words[:10]] if topic_words else []
+                    
+                    # Get sample reviews (first 10)
+                    sample_reviews = topic_reviews.head(50).tolist()
+                    
+                    # Generate summary
+                    summary = generate_topic_summary_gpt4(selected_topic_name, topic_keywords, sample_reviews)
+                    
+                    # Display summary
+                    st.subheader("AI-Generated Topic Summary")
+                    st.write(summary)
+                    
+                    # Store summary in session state to avoid regenerating
+                    if 'topic_summaries' not in st.session_state:
+                        st.session_state.topic_summaries = {}
+                    st.session_state.topic_summaries[selected_topic_id] = summary
+            
+            # Check if we already have a summary for this topic
+            if 'topic_summaries' in st.session_state and selected_topic_id in st.session_state.topic_summaries:
+                st.subheader("AI-Generated Topic Summary")
+                st.write(st.session_state.topic_summaries[selected_topic_id])
+
+    # Generate summaries for all topics button
+    if len(valid_topics) > 0:
+        st.subheader("Generate All Topic Summaries")
+        if st.button("Generate Summaries for All Topics"):
+            if not OPENAI_API_KEY:
+                st.error("OpenAI API key not found. Please add OPENAI_API_KEY to your .env file.")
+            else:
+                import time
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                if 'topic_summaries' not in st.session_state:
+                    st.session_state.topic_summaries = {}
+                
+                for i, topic_id in enumerate(valid_topics):
+                    if topic_id == -1:
+                        continue
+                        
+                    topic_name = topic_names[topic_id]
+                    status_text.text(f"Generating summary for {topic_name} ({i+1}/{len(valid_topics)})")
+                    
+                    # Get topic words
+                    topic_words = topic_model.get_topic(topic_id)
+                    
+                    if topic_words:
+                        # Extract keywords
+                        topic_keywords = [word for word, _ in topic_words[:10]]
+                        
+                        # Get sample reviews
+                        topic_reviews = df_with_topics[df_with_topics['topic'] == topic_id][reviews_col]
+                        sample_reviews = topic_reviews.head(10).tolist()
+                        
+                        # Generate summary
+                        summary = generate_topic_summary_gpt4(topic_name, topic_keywords, sample_reviews)
+                        
+                        # Store summary
+                        st.session_state.topic_summaries[topic_id] = summary
+                    
+                    progress_bar.progress((i + 1) / len(valid_topics))
+                    time.sleep(1)  # Avoid rate limiting
+                
+                status_text.text("All summaries generated!")
+                st.success("All topic summaries have been generated successfully!")
+    
+    # Display all topic summaries if available
+    if 'topic_summaries' in st.session_state and st.session_state.topic_summaries:
+        st.subheader("All Topic Summaries")
+        
+        for topic_id, summary in st.session_state.topic_summaries.items():
+            if topic_id == -1:
+                continue
+                
+            topic_name = topic_names.get(topic_id, f"Topic {topic_id}")
+            with st.expander(f"Summary for {topic_name}"):
+                st.write(summary)
     
     # Summary statistics
     st.subheader("Summary Statistics")
