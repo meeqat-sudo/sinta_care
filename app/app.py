@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 import openai
 from openai import OpenAI
 from pathlib import Path
+import pickle
 warnings.filterwarnings('ignore')
 
 # Load environment variables from .env file
@@ -25,19 +26,53 @@ load_dotenv()
 # Set page config
 st.set_page_config(page_title="Topic Modeling", layout="wide")
 
-
-
 # Define paths using pathlib
 FILE_PATH = Path("dataset") / "webmd_dataset.csv"
 LOGO_PATH = Path("logo.png")
+EMBEDDINGS_PATH = Path("dataset") / "embeddings.pkl"
 
 # Get OpenAI API key from environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-@st.cache_resource
-def load_model():
-    """Load BERT model"""
-    return SentenceTransformer('all-MiniLM-L6-v2')
+
+
+@st.cache_data
+def load_embeddings():
+    """Load pre-generated embeddings from file"""
+    try:
+        with open(EMBEDDINGS_PATH, 'rb') as f:
+            embedding_data = pickle.load(f)
+        return embedding_data
+    except FileNotFoundError:
+        st.error(f"Embeddings file not found at {EMBEDDINGS_PATH}. Please run generate_embeddings.py first.")
+        return None
+    except Exception as e:
+        st.error(f"Error loading embeddings: {str(e)}")
+        return None
+
+def get_filtered_embeddings(df_filtered, embedding_data):
+    """Get embeddings for filtered dataframe based on original indices"""
+    if embedding_data is None:
+        return None
+    
+    # Get the indices of filtered dataframe
+    filtered_indices = df_filtered.index.tolist()
+    
+    # Find positions in original embedding data
+    original_indices = embedding_data['indices']
+    positions = []
+    
+    for idx in filtered_indices:
+        if idx in original_indices:
+            pos = original_indices.index(idx)
+            positions.append(pos)
+    
+    if not positions:
+        return None
+    
+    # Extract embeddings for filtered data
+    filtered_embeddings = embedding_data['embeddings'][positions]
+    return filtered_embeddings
 
 def add_logo_to_sidebar(logo_path, width=None, height=None):
     """
@@ -160,6 +195,35 @@ def safe_dimensionality_reduction(embeddings, n_components=2, method='umap'):
         reducer = PCA(n_components=min(n_components, n_samples-1))
         return reducer.fit_transform(embeddings)
 
+def generate_topic_name_with_gpt(topic_id, topic_model, client):
+    """Generate a short, human-friendly topic name using GPT from keywords only."""
+    keywords = topic_model.get_topic(topic_id)
+    if not keywords:
+        return f"Topic {topic_id}"
+    
+    # Use only the top 5–6 keywords
+    top_keywords = [kw for kw, _ in keywords[:6]]
+
+    prompt = f"""
+    A clustering algorithm grouped some patient reviews into a topic.
+
+    Keywords: {', '.join(top_keywords)}
+
+    Suggest a short, clear, human-friendly topic name (max 5 words). 
+    Return only the name.
+    """
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",   # or gpt-4o-mini
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=20
+    )
+    name = response.choices[0].message.content.strip()
+    return " ".join(name.splitlines()).strip() or f"Topic {topic_id}"
+
+
+
 def generate_topic_summary_gpt4(topic_name, topic_keywords, sample_reviews):
     """
     Generate a summary of a topic using OpenAI GPT-4
@@ -213,16 +277,28 @@ def data_viewer_page(df_filtered):
     st.subheader("Dataset Overview")
     st.dataframe(df_filtered, use_container_width=True)
 
-def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
+def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embedding_data):
     """Topic Analysis Page"""
     st.header("Topic Analysis & Visualizations")
     
-    # Check dataset size
-    dataset_size = len(df_filtered)
-    if dataset_size < 10:
-        st.error("⚠️ Dataset too small for topic analysis. Please select more data or reduce filters.")
-        st.info(f"Current dataset size: {dataset_size} reviews. Minimum required: 10 reviews.")
+    # Check if embeddings are available
+    if embedding_data is None:
+        st.error("⚠️ Pre-generated embeddings not found. Please run generate_embeddings.py first to create embeddings.")
+        st.info("Run the following command in your terminal: `python generate_embeddings.py`")
         return
+        
+    # Get filtered embeddings BEFORE checking dataset size
+    filtered_embeddings = get_filtered_embeddings(df_filtered, embedding_data)
+
+    # Double check both dataframe size and embeddings size
+    dataset_size = len(df_filtered)
+    embedding_size = 0 if filtered_embeddings is None else len(filtered_embeddings)
+
+    if embedding_size < 10:
+        st.error("⚠️ Dataset too small for topic analysis. Please select more data or reduce filters.")
+        st.info(f"Current dataset size: {dataset_size} reviews | Embeddings available: {embedding_size}. Minimum required: 10.")
+        return
+
     
     # Adaptive parameters based on dataset size
     if dataset_size < 50:
@@ -279,40 +355,84 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
     """, unsafe_allow_html=True)
     
     if button_clicked:
-        with st.spinner("Loading models..."):
-            sentence_model = load_model()
-        
+
         with st.spinner("Creating topic model..."):
             # Get text data
             texts = df_filtered[reviews_col].astype(str).tolist()
             
-            # Create BERTopic model with adaptive parameters
+            # Get filtered embeddings
+            filtered_embeddings = get_filtered_embeddings(df_filtered, embedding_data)
+            
+            if filtered_embeddings is None:
+                st.error("Could not extract embeddings for filtered data. Please check your filters.")
+                return
+            
+            if dataset_size < 50:
+                min_df = 1
+                max_df = 1.0  # don’t exclude common words for small sets
+            else:
+                min_df = max(1, dataset_size // 100)  # ~1% of docs
+                max_df = 0.95
+
             vectorizer_model = CountVectorizer(
-                stop_words="english", 
-                min_df=max(1, min(2, dataset_size // 20)),  # Adaptive min_df
-                max_df=0.95, 
+                stop_words="english",
+                min_df=min_df,
+                max_df=max_df,
                 ngram_range=(1, 2)
             )
-            
+
             topic_model = BERTopic(
-                embedding_model=sentence_model,
+                embedding_model=None,
                 vectorizer_model=vectorizer_model,
                 nr_topics=n_topics,
                 min_topic_size=min_topic_size,
                 verbose=False
             )
             
-            # Fit the model
-            topics, probs = topic_model.fit_transform(texts)
+            # Fit the model using pre-computed embeddings
+            topics, probs = topic_model.fit_transform(texts, filtered_embeddings)
             
             # Add topics to dataframe
             df_with_topics = df_filtered.copy()
             df_with_topics['topic'] = topics
             
             # Create meaningful topic names
-            topic_names = {}
-            for topic_id in df_with_topics['topic'].unique():
-                topic_names[topic_id] = get_topic_name(topic_model, topic_id)
+            # === Create GPT-based topic names (cached in st.session_state) ===
+            if 'topic_names' not in st.session_state:
+                st.session_state['topic_names'] = {}
+
+            topic_names = st.session_state['topic_names']
+
+            client = None
+            if OPENAI_API_KEY:
+                try:
+                    openai.api_key = OPENAI_API_KEY
+                    client = OpenAI()
+                except Exception as e:
+                    st.warning(f"OpenAI client init failed, falling back to keyword names: {e}")
+
+            unique_topic_ids = sorted(df_with_topics['topic'].unique().tolist())
+
+            for topic_id in unique_topic_ids:
+                if topic_id == -1:
+                    topic_names[topic_id] = "Outliers/Miscellaneous"
+                    continue
+
+                if topic_id in topic_names and topic_names[topic_id]:
+                    continue  # already cached
+
+                if client:
+                    try:
+                        topic_names[topic_id] = generate_topic_name_with_gpt(topic_id, topic_model, client)
+                    except Exception as e:
+                        st.warning(f"GPT naming failed for topic {topic_id}: {e}")
+                        topic_names[topic_id] = get_topic_name(topic_model, topic_id)
+                else:
+                    topic_names[topic_id] = get_topic_name(topic_model, topic_id)
+
+            st.session_state['topic_names'] = topic_names
+            df_with_topics['topic_name'] = df_with_topics['topic'].map(topic_names)
+
             
             # Add topic names to dataframe
             df_with_topics['topic_name'] = df_with_topics['topic'].map(topic_names)
@@ -322,6 +442,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
             st.session_state['topics'] = topics
             st.session_state['df_with_topics'] = df_with_topics
             st.session_state['topic_names'] = topic_names
+            st.session_state['filtered_embeddings'] = filtered_embeddings
         
         st.success("Topic modeling completed!")
     
@@ -334,6 +455,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
     topics = st.session_state['topics']
     df_with_topics = st.session_state['df_with_topics']
     topic_names = st.session_state['topic_names']
+    filtered_embeddings = st.session_state.get('filtered_embeddings')
     
     # Show current filter info
     st.info(f"Showing results for {len(df_with_topics)} reviews with current filters")
@@ -350,11 +472,13 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
     # Create visualizations
     if viz_type == "2D Plot":
         try:
-            # Get embeddings for visualization
-            embeddings = topic_model._extract_embeddings(df_with_topics[reviews_col].tolist())
-            
+            # Use pre-computed embeddings for visualization
+            if filtered_embeddings is None:
+                st.error("Embeddings not available for visualization.")
+                return
+                
             # Use safe dimensionality reduction
-            reduced_embeddings = safe_dimensionality_reduction(embeddings, n_components=2)
+            reduced_embeddings = safe_dimensionality_reduction(filtered_embeddings, n_components=2)
             
             # Create DataFrame for plotting
             plot_df = pd.DataFrame({
@@ -402,11 +526,13 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
     
     elif viz_type == "3D Plot":
         try:
-            # Get embeddings for visualization
-            embeddings = topic_model._extract_embeddings(df_with_topics[reviews_col].tolist())
-            
+            # Use pre-computed embeddings for visualization
+            if filtered_embeddings is None:
+                st.error("Embeddings not available for visualization.")
+                return
+                
             # Use safe dimensionality reduction
-            reduced_embeddings = safe_dimensionality_reduction(embeddings, n_components=3)
+            reduced_embeddings = safe_dimensionality_reduction(filtered_embeddings, n_components=3)
             
             # Handle case where we get fewer components than requested
             if reduced_embeddings.shape[1] < 3:
@@ -531,8 +657,6 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
             topic_reviews = df_with_topics[df_with_topics['topic_name'] == selected_topic_name][reviews_col]
             st.write(f"**Number of reviews:** {len(topic_reviews)}")
             
-
-            
             # Display sample reviews
             st.write("**Sample Reviews:**")
             for i, review in enumerate(topic_reviews.head(6), 1):
@@ -549,9 +673,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs):
                     # Generate summary
                     summary = generate_topic_summary_gpt4(selected_topic_name, topic_keywords, sample_reviews)
                     
-                    # Display summary
-                    st.subheader("AI-Generated Topic Summary")
-                    st.write(summary)
+    
                     
                     # Store summary in session state to avoid regenerating
                     if 'topic_summaries' not in st.session_state:
@@ -687,6 +809,9 @@ def main():
     if st.sidebar.button("Topic Analysis", use_container_width=True):
         st.session_state.page = "Topic Analysis"
 
+    # Load embedding data once
+    embedding_data = load_embeddings()
+
     try:
         # Load data from hardcoded path
         df = pd.read_csv(FILE_PATH)
@@ -788,7 +913,7 @@ def main():
         if st.session_state.page == "Data Viewer":
             data_viewer_page(df_filtered)
         elif st.session_state.page == "Topic Analysis":
-            topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs)
+            topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embedding_data)
 
     except FileNotFoundError:
         st.error(f"File not found: {FILE_PATH}. Please make sure the file exists at the specified path.")
