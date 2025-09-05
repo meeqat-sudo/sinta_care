@@ -16,7 +16,7 @@ import os
 from dotenv import load_dotenv
 import openai
 from openai import OpenAI
-
+from pathlib import Path
 warnings.filterwarnings('ignore')
 
 # Load environment variables from .env file
@@ -25,9 +25,11 @@ load_dotenv()
 # Set page config
 st.set_page_config(page_title="Topic Modeling", layout="wide")
 
-# Hardcoded file path - replace with your actual file path
-FILE_PATH = "E:\\app\\POC\\dataset\\webmd_dataset.csv"  # Change this to your actual file path
-LOGO_PATH = "E:\\app\\POC\\logo.png"  # Change this to your logo file path
+
+
+# Define paths using pathlib
+FILE_PATH = Path("dataset") / "webmd_dataset.csv"
+LOGO_PATH = Path("logo.png")
 
 # Get OpenAI API key from environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
