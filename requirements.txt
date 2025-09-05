@@ -11,3 +11,4 @@ bertopic==0.15.0
 Pillow==10.0.0
 openai==1.105.0
 python-dotenv==1.0.1
+Pillow
