@@ -641,6 +641,10 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
     # Get valid topics (excluding outliers)
     valid_topics = sorted([t for t in df_with_topics['topic'].unique() if t != -1])
     
+
+
+    #commented generate all topics button
+
     if len(topic_counts) > 0:
         # Let the user select a topic by name
         topic_options = ["Please select a topic first"] + list(topic_counts.index)
@@ -687,62 +691,68 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 st.subheader("AI-Generated Topic Summary")
                 st.write(st.session_state.topic_summaries[selected_topic_id])
 
-    # Generate summaries for all topics button
-    if len(valid_topics) > 0:
-        st.subheader("Generate All Topic Summaries")
-        if st.button("Generate Summaries for All Topics"):
-            if not OPENAI_API_KEY:
-                st.error("OpenAI API key not found. Please add OPENAI_API_KEY to your .env file.")
-            else:
-                import time
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+
+# ------------------------------------------------------------------------------------------------------------
+    # # Generate summaries for all topics button commented
+    # if len(valid_topics) > 0:
+    #     st.subheader("Generate All Topic Summaries")
+    #     if st.button("Generate Summaries for All Topics"):
+    #         if not OPENAI_API_KEY:
+    #             st.error("OpenAI API key not found. Please add OPENAI_API_KEY to your .env file.")
+    #         else:
+    #             import time
+    #             progress_bar = st.progress(0)
+    #             status_text = st.empty()
                 
-                if 'topic_summaries' not in st.session_state:
-                    st.session_state.topic_summaries = {}
+    #             if 'topic_summaries' not in st.session_state:
+    #                 st.session_state.topic_summaries = {}
                 
-                for i, topic_id in enumerate(valid_topics):
-                    if topic_id == -1:
-                        continue
+    #             for i, topic_id in enumerate(valid_topics):
+    #                 if topic_id == -1:
+    #                     continue
                         
-                    topic_name = topic_names[topic_id]
-                    status_text.text(f"Generating summary for {topic_name} ({i+1}/{len(valid_topics)})")
+    #                 topic_name = topic_names[topic_id]
+    #                 status_text.text(f"Generating summary for {topic_name} ({i+1}/{len(valid_topics)})")
                     
-                    # Get topic words
-                    topic_words = topic_model.get_topic(topic_id)
+    #                 # Get topic words
+    #                 topic_words = topic_model.get_topic(topic_id)
                     
-                    if topic_words:
-                        # Extract keywords
-                        topic_keywords = [word for word, _ in topic_words[:10]]
+    #                 if topic_words:
+    #                     # Extract keywords
+    #                     topic_keywords = [word for word, _ in topic_words[:10]]
                         
-                        # Get sample reviews
-                        topic_reviews = df_with_topics[df_with_topics['topic'] == topic_id][reviews_col]
-                        sample_reviews = topic_reviews.head(10).tolist()
+    #                     # Get sample reviews
+    #                     topic_reviews = df_with_topics[df_with_topics['topic'] == topic_id][reviews_col]
+    #                     sample_reviews = topic_reviews.head(10).tolist()
                         
-                        # Generate summary
-                        summary = generate_topic_summary_gpt4(topic_name, topic_keywords, sample_reviews)
+    #                     # Generate summary
+    #                     summary = generate_topic_summary_gpt4(topic_name, topic_keywords, sample_reviews)
                         
-                        # Store summary
-                        st.session_state.topic_summaries[topic_id] = summary
+    #                     # Store summary
+    #                     st.session_state.topic_summaries[topic_id] = summary
                     
-                    progress_bar.progress((i + 1) / len(valid_topics))
-                    time.sleep(1)  # Avoid rate limiting
+    #                 progress_bar.progress((i + 1) / len(valid_topics))
+    #                 time.sleep(1)  # Avoid rate limiting
                 
-                status_text.text("All summaries generated!")
-                st.success("All topic summaries have been generated successfully!")
+    #             status_text.text("All summaries generated!")
+    #             st.success("All topic summaries have been generated successfully!")
     
-    # Display all topic summaries if available
-    if 'topic_summaries' in st.session_state and st.session_state.topic_summaries:
-        st.subheader("All Topic Summaries")
+
+
+    # # Display all topic summaries if available
+    # if 'topic_summaries' in st.session_state and st.session_state.topic_summaries:
+    #     st.subheader("All Topic Summaries")
         
-        for topic_id, summary in st.session_state.topic_summaries.items():
-            if topic_id == -1:
-                continue
+    #     for topic_id, summary in st.session_state.topic_summaries.items():
+    #         if topic_id == -1:
+    #             continue
                 
-            topic_name = topic_names.get(topic_id, f"Topic {topic_id}")
-            with st.expander(f"Summary for {topic_name}"):
-                st.write(summary)
+    #         topic_name = topic_names.get(topic_id, f"Topic {topic_id}")
+    #         with st.expander(f"Summary for {topic_name}"):
+    #             st.write(summary)
     
+# -------------------------------------------------------------------------------------------------------------
+
     # Summary statistics
     st.subheader("Summary Statistics")
     col1, col2, col3, col4 = st.columns(4)
