@@ -367,6 +367,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 st.error("Could not extract embeddings for filtered data. Please check your filters.")
                 return
             
+            # Create BERTopic model with adaptive parameters and pre-computed embeddings
             if dataset_size < 50:
                 min_df = 1
                 max_df = 1.0  # don’t exclude common words for small sets
@@ -381,6 +382,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 ngram_range=(1, 2)
             )
 
+            
             topic_model = BERTopic(
                 embedding_model=None,
                 vectorizer_model=vectorizer_model,
@@ -641,47 +643,47 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
     
     if len(topic_counts) > 0:
         # Let the user select a topic by name
-        selected_topic_name = st.selectbox("Select topic to explore:", list(topic_counts.index))
-        
-        if selected_topic_name:
-            # Get topic ID from name
-            selected_topic_id = df_with_topics[df_with_topics['topic_name'] == selected_topic_name]['topic'].iloc[0]
-            
-            # Get topic words
-            topic_words = topic_model.get_topic(selected_topic_id)
-            
-            if topic_words:
-                st.write(f"**Keywords:** {', '.join([word for word, _ in topic_words[:10]])}")
-            
-            # Show reviews for selected topic
-            topic_reviews = df_with_topics[df_with_topics['topic_name'] == selected_topic_name][reviews_col]
-            st.write(f"**Number of reviews:** {len(topic_reviews)}")
-            
-            # Display sample reviews
-            st.write("**Sample Reviews:**")
-            for i, review in enumerate(topic_reviews.head(6), 1):
-                st.write(f"**{i}.** {review}")
-            # Generate GPT-4 summary
-            if st.button("Generate Topic Summary", key=f"summary_{selected_topic_id}"):
-                with st.spinner("Generating AI summary with GPT-4..."):
-                    # Extract keywords
+        topic_options = ["Please select a topic first"] + list(topic_counts.index)
+        selected_topic_name = st.selectbox("Select topic to explore:", topic_options)
+
+        # Only show details if a real topic is selected
+        if selected_topic_name != "Please select a topic first":
+            # (Put all your topic details code here)
+                
+            if selected_topic_name:
+                # Get topic ID from name
+                selected_topic_id = df_with_topics[df_with_topics['topic_name'] == selected_topic_name]['topic'].iloc[0]
+                
+                # Get topic words
+                topic_words = topic_model.get_topic(selected_topic_id)
+                
+                if topic_words:
+                    st.write(f"**Keywords:** {', '.join([word for word, _ in topic_words[:10]])}")
+                
+                # Show reviews for selected topic
+                topic_reviews = df_with_topics[df_with_topics['topic_name'] == selected_topic_name][reviews_col]
+                st.write(f"**Number of reviews:** {len(topic_reviews)}")
+                
+                # Display sample reviews
+                st.write("**Sample Reviews:**")
+                for i, review in enumerate(topic_reviews.head(5), 1):
+                    st.write(f"**{i}.** {review}")
+                # Generate GPT-4 summary
+                # --- ONLY GENERATE SUMMARY ONCE ---
+                if 'topic_summaries' not in st.session_state:
+                    st.session_state.topic_summaries = {}
+
+                if selected_topic_id not in st.session_state.topic_summaries:
                     topic_keywords = [word for word, _ in topic_words[:10]] if topic_words else []
-                    
-                    # Get sample reviews (first 10)
                     sample_reviews = topic_reviews.head(50).tolist()
-                    
-                    # Generate summary
-                    summary = generate_topic_summary_gpt4(selected_topic_name, topic_keywords, sample_reviews)
-                    
-    
-                    
-                    # Store summary in session state to avoid regenerating
-                    if 'topic_summaries' not in st.session_state:
-                        st.session_state.topic_summaries = {}
-                    st.session_state.topic_summaries[selected_topic_id] = summary
-            
-            # Check if we already have a summary for this topic
-            if 'topic_summaries' in st.session_state and selected_topic_id in st.session_state.topic_summaries:
+
+                    with st.spinner("Generating AI summary with GPT-4..."):
+                        summary = generate_topic_summary_gpt4(
+                            selected_topic_name, topic_keywords, sample_reviews
+                        )
+                        st.session_state.topic_summaries[selected_topic_id] = summary
+
+                # Show summary (cached after first run)
                 st.subheader("AI-Generated Topic Summary")
                 st.write(st.session_state.topic_summaries[selected_topic_id])
 
@@ -922,3 +924,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
