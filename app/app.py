@@ -242,21 +242,21 @@ def generate_topic_summary_gpt4(topic_name, topic_keywords, sample_reviews):
 
         # Prepare the prompt
         prompt = f"""
-        Analyze the following topic cluster from medical reviews and provide a comprehensive summary:
-        
-        Topic Name: {topic_name}
-        Keywords: {', '.join(topic_keywords)}
-        
+        As a medical analyst, summarize this patient review topic:
+
+        Topic: {topic_name}
+        Keywords: {', '.join(topic_keywords[:6])}
+
         Sample Reviews:
-        {chr(10).join([f'{i+1}. {review}' for i, review in enumerate(sample_reviews)])}
-        
-        Please provide a concise yet comprehensive summary of this topic that includes:
-        1. The main themes or concerns expressed in these reviews
-        2. Common patterns or sentiments
-        3. Any notable insights about patient experiences
-        4. Potential implications for healthcare providers
-        
-        Keep the summary professional and focused on medical insights.
+        {chr(10).join([f'{i+1}. {review}' for i, review in enumerate(sample_reviews[:3])])}
+
+        Provide a concise medical summary covering:
+        1. Main health concerns & themes
+        2. Patient sentiment patterns
+        3. Key treatment experiences
+        4. Clinical implications for providers
+
+        Keep it professional and actionable.
         """
         
         # Call OpenAI API
@@ -539,8 +539,11 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
     topic_names = st.session_state['topic_names']
     filtered_embeddings = st.session_state.get('filtered_embeddings')
     
+    # IMPORTANT: Apply additional filters to df_with_topics and add topic info to df_analysis
+    df_analysis_with_topics = df_with_topics[df_with_topics.index.isin(df_analysis.index)].copy()
+    
     # Show current filter info
-    st.info(f"Showing results for {len(df_with_topics)} reviews with current filters")
+    st.info(f"Showing results for {len(df_analysis_with_topics)} reviews with current filters")
     
     # Visualization controls
     st.subheader("Visualization Controls")
@@ -551,26 +554,36 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
     with col2:
         show_reviews = st.checkbox("Show reviews on click", value=True)
     
-    # viz_type = st.selectbox("Visualization Type:", ["2D Plot", "3D Plot"])
-
+    # Create visualizations
     # Create visualizations
     if viz_type == "2D Plot":
         try:
-            # Use pre-computed embeddings for visualization
+            # Use pre-computed embeddings for visualization but filter them
             if filtered_embeddings is None:
                 st.error("Embeddings not available for visualization.")
                 return
+            
+            # Get indices that exist in both df_with_topics and df_analysis_with_topics
+            original_indices = df_with_topics.index.tolist()
+            filtered_indices = df_analysis_with_topics.index.tolist()
+            
+            # Create boolean mask for filtering
+            mask = [idx in filtered_indices for idx in original_indices]
+            
+            # Filter embeddings and topics using the mask
+            analysis_embeddings = filtered_embeddings[mask]
+            analysis_topics = np.array(topics)[mask]
                 
             # Use safe dimensionality reduction
-            reduced_embeddings = safe_dimensionality_reduction(filtered_embeddings, n_components=2)
+            reduced_embeddings = safe_dimensionality_reduction(analysis_embeddings, n_components=2)
             
             # Create DataFrame for plotting
             plot_df = pd.DataFrame({
                 'x': reduced_embeddings[:, 0],
                 'y': reduced_embeddings[:, 1],
-                'topic': topics,
-                'topic_name': df_with_topics['topic_name'],
-                'text': df_with_topics[reviews_col]  # Full text
+                'topic': analysis_topics,
+                'topic_name': df_analysis_with_topics['topic_name'].values,
+                'text': df_analysis_with_topics[reviews_col].values  # Full text
             })
             
             # Remove outlier topic (-1) for cleaner visualization
@@ -592,23 +605,19 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                     y=topic_data['y'],
                     mode='markers',
                     name=topic_name,
-                    text=topic_data['text'],  # Full text for hover
+                    text=topic_data['text'],
                     hoverinfo='text',
-                    hovertemplate='<b>Topic:</b> ' + topic_name + 
+                    hovertemplate='<b>Topic:</b> ' + topic_name +
                                 '<br><b>Review:</b> %{text}' +
                                 '<extra></extra>',
-                    marker=dict(size=12, opacity=0.7)
+                    marker=dict(
+                        size=9,                     # Bigger dots
+                        opacity=0.95,                # Almost solid
+                        line=dict(width=1, color='black'),  # Bold black border
+                        symbol='circle'              # Circle shape
+                    )
                 ))
-                # fig.add_trace(go.Scatter(
-                #     x=topic_data['x'],
-                #     y=topic_data['y'],
-                #     mode='markers',
-                #     name=topic_name,
-                #     customdata=topic_data['text'],  # full text here
-                #     hovertemplate='<b>Topic:</b> ' + topic_name +
-                #                 '<br><b>Review:</b> %{customdata}<extra></extra>',
-                #     marker=dict(size=8, opacity=0.7)
-                # ))
+
 
             fig.update_layout(
                 title="Topic Clusters (2D Visualization) - Hover to see full reviews",
@@ -617,9 +626,6 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 showlegend=True
             )
 
-
- 
-########################################3            
             # Display plot
             st.plotly_chart(fig, use_container_width=True)
             
@@ -629,13 +635,24 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
             
     elif viz_type == "3D Plot":
         try:
-            # Use pre-computed embeddings for visualization
+            # Use pre-computed embeddings for visualization but filter them
             if filtered_embeddings is None:
                 st.error("Embeddings not available for visualization.")
                 return
+            
+            # Get indices that exist in both df_with_topics and df_analysis_with_topics
+            original_indices = df_with_topics.index.tolist()
+            filtered_indices = df_analysis_with_topics.index.tolist()
+            
+            # Create boolean mask for filtering
+            mask = [idx in filtered_indices for idx in original_indices]
+            
+            # Filter embeddings and topics using the mask
+            analysis_embeddings = filtered_embeddings[mask]
+            analysis_topics = np.array(topics)[mask]
                 
             # Use safe dimensionality reduction
-            reduced_embeddings = safe_dimensionality_reduction(filtered_embeddings, n_components=3)
+            reduced_embeddings = safe_dimensionality_reduction(analysis_embeddings, n_components=3)
             
             # Handle case where we get fewer components than requested
             if reduced_embeddings.shape[1] < 3:
@@ -653,9 +670,9 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 'x': reduced_embeddings[:, 0],
                 'y': reduced_embeddings[:, 1],
                 'z': reduced_embeddings[:, 2],
-                'topic': topics,
-                'topic_name': df_with_topics['topic_name'],
-                'text': df_with_topics[reviews_col].str[:100] + "..."
+                'topic': analysis_topics,
+                'topic_name': df_analysis_with_topics['topic_name'].values,
+                'text': df_analysis_with_topics[reviews_col].str[:100] + "..."
             })
             
             # Remove outlier topic (-1)
@@ -683,11 +700,12 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
         except Exception as e:
             st.error(f"Error creating 3D visualization: {str(e)}")
             st.info("This might be due to the dataset being too small or sparse. Try selecting more data.")    
-    # Topic distribution charts
+    
+    # Topic distribution charts - USE FILTERED DATA
     st.subheader("Topic Distribution")
     
-    # Filter out outlier topic for distribution
-    valid_topics_df = df_with_topics[df_with_topics['topic'] != -1]
+    # Filter out outlier topic for distribution - USE df_analysis_with_topics
+    valid_topics_df = df_analysis_with_topics[df_analysis_with_topics['topic'] != -1]
     
     if len(valid_topics_df) == 0:
         st.warning("No valid topics found. All data points are classified as outliers.")
@@ -711,7 +729,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
         # Show reviews when bar is clicked
         if show_reviews and event_bar and 'selection' in event_bar and event_bar['selection']['points']:
             selected_topic_name = event_bar['selection']['points'][0]['x']
-            show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
+            show_topic_reviews(df_analysis_with_topics, selected_topic_name, reviews_col, 5)
     
     with col2:
         # Pie chart
@@ -725,18 +743,14 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
         # Show reviews when pie slice is clicked
         if show_reviews and event_pie and 'selection' in event_pie and event_pie['selection']['points']:
             selected_topic_name = event_pie['selection']['points'][0]['label']
-            show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
+            show_topic_reviews(df_analysis_with_topics, selected_topic_name, reviews_col, 5)
     
-    # Topic details with GPT-4 summaries
+    # Topic details with GPT-4 summaries - USE FILTERED DATA
     st.subheader("Select Topic")
     
-    # Get valid topics (excluding outliers)
-    valid_topics = sorted([t for t in df_with_topics['topic'].unique() if t != -1])
+    # Get valid topics (excluding outliers) - USE FILTERED DATA
+    valid_topics = sorted([t for t in df_analysis_with_topics['topic'].unique() if t != -1])
     
-
-
-    #commented generate all topics button
-
     if len(topic_counts) > 0:
         # Let the user select a topic by name
         topic_options = ["Please select a topic first"] + list(topic_counts.index)
@@ -744,11 +758,9 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
 
         # Only show details if a real topic is selected
         if selected_topic_name != "Please select a topic first":
-            # (Put all your topic details code here)
-                
             if selected_topic_name:
-                # Get topic ID from name
-                selected_topic_id = df_with_topics[df_with_topics['topic_name'] == selected_topic_name]['topic'].iloc[0]
+                # Get topic ID from name - USE FILTERED DATA
+                selected_topic_id = df_analysis_with_topics[df_analysis_with_topics['topic_name'] == selected_topic_name]['topic'].iloc[0]
                 
                 # Get topic words
                 topic_words = topic_model.get_topic(selected_topic_id)
@@ -758,16 +770,16 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 if topic_words:
                     st.write(f"**Keywords:** {', '.join([word for word, _ in topic_words[:10]])}")
                 
-                # Show reviews for selected topic
-                topic_reviews = df_with_topics[df_with_topics['topic_name'] == selected_topic_name][reviews_col]
+                # Show reviews for selected topic - USE FILTERED DATA
+                topic_reviews = df_analysis_with_topics[df_analysis_with_topics['topic_name'] == selected_topic_name][reviews_col]
                 st.write(f"**Number of reviews:** {len(topic_reviews)}")
                 
                 # Display sample reviews
                 st.write("**Sample Reviews:**")
                 for i, review in enumerate(topic_reviews.head(5), 1):
                     st.write(f"**{i}.** {review}")
+                    
                 # Generate GPT-4 summary
-                # --- ONLY GENERATE SUMMARY ONCE ---
                 if 'topic_summaries' not in st.session_state:
                     st.session_state.topic_summaries = {}
 
@@ -785,74 +797,12 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 st.subheader("AI-Generated Topic Summary")
                 st.write(st.session_state.topic_summaries[selected_topic_id])
 
-
-# ------------------------------------------------------------------------------------------------------------
-    # # Generate summaries for all topics button commented
-    # if len(valid_topics) > 0:
-    #     st.subheader("Generate All Topic Summaries")
-    #     if st.button("Generate Summaries for All Topics"):
-    #         if not OPENAI_API_KEY:
-    #             st.error("OpenAI API key not found. Please add OPENAI_API_KEY to your .env file.")
-    #         else:
-    #             import time
-    #             progress_bar = st.progress(0)
-    #             status_text = st.empty()
-                
-    #             if 'topic_summaries' not in st.session_state:
-    #                 st.session_state.topic_summaries = {}
-                
-    #             for i, topic_id in enumerate(valid_topics):
-    #                 if topic_id == -1:
-    #                     continue
-                        
-    #                 topic_name = topic_names[topic_id]
-    #                 status_text.text(f"Generating summary for {topic_name} ({i+1}/{len(valid_topics)})")
-                    
-    #                 # Get topic words
-    #                 topic_words = topic_model.get_topic(topic_id)
-                    
-    #                 if topic_words:
-    #                     # Extract keywords
-    #                     topic_keywords = [word for word, _ in topic_words[:10]]
-                        
-    #                     # Get sample reviews
-    #                     topic_reviews = df_with_topics[df_with_topics['topic'] == topic_id][reviews_col]
-    #                     sample_reviews = topic_reviews.head(10).tolist()
-                        
-    #                     # Generate summary
-    #                     summary = generate_topic_summary_gpt4(topic_name, topic_keywords, sample_reviews)
-                        
-    #                     # Store summary
-    #                     st.session_state.topic_summaries[topic_id] = summary
-                    
-    #                 progress_bar.progress((i + 1) / len(valid_topics))
-    #                 time.sleep(1)  # Avoid rate limiting
-                
-    #             status_text.text("All summaries generated!")
-    #             st.success("All topic summaries have been generated successfully!")
-    
-
-
-    # # Display all topic summaries if available
-    # if 'topic_summaries' in st.session_state and st.session_state.topic_summaries:
-    #     st.subheader("All Topic Summaries")
-        
-    #     for topic_id, summary in st.session_state.topic_summaries.items():
-    #         if topic_id == -1:
-    #             continue
-                
-    #         topic_name = topic_names.get(topic_id, f"Topic {topic_id}")
-    #         with st.expander(f"Summary for {topic_name}"):
-    #             st.write(summary)
-    
-# -------------------------------------------------------------------------------------------------------------
-
-    # Summary statistics
+    # Summary statistics - USE FILTERED DATA
     st.subheader("Summary Statistics")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Reviews", len(df_with_topics))
+        st.metric("Total Reviews", len(df_analysis_with_topics))
     with col2:
         valid_topics_count = len(valid_topics)
         st.metric("Topics Found", valid_topics_count)
@@ -867,11 +817,11 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
         else:
             st.metric("Largest Topic", "0 reviews")
     
-    # Download results
+    # Download results - USE FILTERED DATA
     st.subheader("Download Results")
     
     # Prepare download data
-    download_df = df_with_topics[[reviews_col, 'topic', 'topic_name']].copy()
+    download_df = df_analysis_with_topics[[reviews_col, 'topic', 'topic_name']].copy()
     download_df.columns = ['review_text', 'topic_id', 'topic_name']
     
     csv = download_df.to_csv(index=False)
