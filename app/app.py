@@ -370,10 +370,17 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
             # Create BERTopic model with adaptive parameters and pre-computed embeddings
             if dataset_size < 50:
                 min_df = 1
-                max_df = 1.0  # don’t exclude common words for small sets
+                max_df = 1.0
             else:
                 min_df = max(1, dataset_size // 100)  # ~1% of docs
                 max_df = 0.95
+
+            # 🔥 Safety check: make sure max_df isn't smaller than min_df
+            if isinstance(max_df, float):
+                max_doc_count = int(max_df * dataset_size)
+                if max_doc_count < min_df:
+                    max_df = 1.0  # allow all terms if conflict
+
 
             vectorizer_model = CountVectorizer(
                 stop_words="english",
@@ -636,7 +643,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
             show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
     
     # Topic details with GPT-4 summaries
-    st.subheader("Topic Details")
+    st.subheader("Select Topic")
     
     # Get valid topics (excluding outliers)
     valid_topics = sorted([t for t in df_with_topics['topic'].unique() if t != -1])
@@ -648,7 +655,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
     if len(topic_counts) > 0:
         # Let the user select a topic by name
         topic_options = ["Please select a topic first"] + list(topic_counts.index)
-        selected_topic_name = st.selectbox("Select topic to explore:", topic_options)
+        selected_topic_name = st.selectbox("Please select a topic to view details:", topic_options)
 
         # Only show details if a real topic is selected
         if selected_topic_name != "Please select a topic first":
@@ -661,6 +668,8 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 # Get topic words
                 topic_words = topic_model.get_topic(selected_topic_id)
                 
+                st.subheader("Topic Details")
+
                 if topic_words:
                     st.write(f"**Keywords:** {', '.join([word for word, _ in topic_words[:10]])}")
                 
@@ -845,20 +854,31 @@ def main():
         selected_drugs = []  # Initialize selected_drugs
         
         # Drug filter - Multi selector
+        # Drug filter - Multi selector
         drug_cols = [col for col in ['Drug', 'drug', 'drugName', 'drug_name'] if col in df_clean.columns]
         if drug_cols:
             drug_col = drug_cols[0]
             # Remove empty/NaN values and get unique drugs
             unique_drugs = sorted([drug for drug in df_clean[drug_col].dropna().unique() if str(drug).strip() != ''])
+            
             if len(unique_drugs) > 0:
+                # Add "All" option at the top
+                drug_options = ["All"] + unique_drugs
+                
                 selected_drugs = st.sidebar.multiselect(
                     "Select Drugs: *Required for Topic Analysis*",
-                    unique_drugs,
-                    default=[],
+                    drug_options,
+                    default=["All"],  # Default to All
                     help="You must select at least one drug to perform topic analysis"
                 )
+                
+                # If "All" is selected, treat it as all drugs
+                if "All" in selected_drugs:
+                    selected_drugs = unique_drugs
+
                 if selected_drugs:
                     filters[drug_col] = selected_drugs
+
         
         # Age filter - Multi selector
         if 'Age' in df_clean.columns or 'age' in df_clean.columns:
