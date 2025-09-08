@@ -281,6 +281,7 @@ def data_viewer_page(df_filtered):
     st.subheader("Dataset Overview")
     st.dataframe(df_filtered, use_container_width=True)
 
+
 def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embedding_data):
     """Topic Analysis Page"""
     st.header("Topic Analysis & Visualizations")
@@ -303,16 +304,6 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
         st.info(f"Current dataset size: {dataset_size} reviews | Embeddings available: {embedding_size}. Minimum required: 10.")
         return
 
-    
-    # Adaptive parameters based on dataset size
-    if dataset_size < 50:
-        n_topics = min(3, dataset_size // 5)  # Fewer topics for small datasets
-        min_topic_size = max(2, dataset_size // 10)  # Smaller minimum topic size
-        st.info(f"Small dataset detected ({dataset_size} reviews). Using {n_topics} topics with min_topic_size={min_topic_size}")
-    else:
-        n_topics = 5
-        min_topic_size = 10
-    
     # Check if drugs are selected
     if not selected_drugs:
         st.warning("⚠️ Please select at least one drug from the filters in the sidebar before running topic analysis.")
@@ -359,7 +350,102 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
     """, unsafe_allow_html=True)
     
     if button_clicked:
-
+        # Store that analysis has been run
+        st.session_state.analysis_run = True
+        st.session_state.initial_drugs = selected_drugs.copy()
+    
+    # Check if analysis has been run
+    analysis_run = st.session_state.get('analysis_run', False)
+    
+    # ADDITIONAL FILTERS IN SIDEBAR (only enabled after analysis is run)
+    st.sidebar.subheader("🔍 Refine Topic Analysis")
+    
+    # Create additional filters for topic analysis
+    analysis_filters = {}
+    df_analysis = df_filtered.copy()
+    
+    # Age filter in sidebar
+    if 'Age' in df_analysis.columns or 'age' in df_analysis.columns:
+        age_col = 'Age' if 'Age' in df_analysis.columns else 'age'
+        unique_ages = sorted([age for age in df_analysis[age_col].dropna().unique() if str(age).strip() != ''])
+        if unique_ages:
+            if analysis_run:
+                selected_ages = st.sidebar.multiselect("Filter by Age:", unique_ages, default=[])
+            else:
+                st.sidebar.multiselect("Filter by Age:", unique_ages, default=[], disabled=True)
+                selected_ages = []
+            
+            if selected_ages:
+                analysis_filters[age_col] = selected_ages
+                df_analysis = df_analysis[df_analysis[age_col].isin(selected_ages)]
+    
+    # Satisfaction filter in sidebar
+    if 'Satisfaction' in df_analysis.columns or 'satisfaction' in df_analysis.columns:
+        sat_col = 'Satisfaction' if 'Satisfaction' in df_analysis.columns else 'satisfaction'
+        df_analysis[sat_col] = pd.to_numeric(df_analysis[sat_col], errors='coerce')
+        min_sat = df_analysis[sat_col].min()
+        max_sat = df_analysis[sat_col].max()
+        
+        if not pd.isna(min_sat) and not pd.isna(max_sat):
+            if analysis_run:
+                sat_range = st.sidebar.slider(
+                    "Filter by Satisfaction Range:",
+                    min_value=int(min_sat),
+                    max_value=int(max_sat),
+                    value=(int(min_sat), int(max_sat)),
+                    step=1
+                )
+            else:
+                st.sidebar.slider(
+                    "Filter by Satisfaction Range:",
+                    min_value=int(min_sat),
+                    max_value=int(max_sat),
+                    value=(int(min_sat), int(max_sat)),
+                    step=1,
+                    disabled=True
+                )
+                sat_range = (int(min_sat), int(max_sat))
+            
+            df_analysis = df_analysis[
+                (df_analysis[sat_col] >= sat_range[0]) & 
+                (df_analysis[sat_col] <= sat_range[1])
+            ]
+    
+    # Gender filter in sidebar
+    gender_cols = [col for col in ['Gender', 'gender', 'Sex', 'sex'] if col in df_analysis.columns]
+    if gender_cols:
+        gender_col = gender_cols[0]
+        unique_genders = sorted([gender for gender in df_analysis[gender_col].dropna().unique() if str(gender).strip() != ''])
+        if unique_genders:
+            if analysis_run:
+                selected_gender = st.sidebar.radio("Filter by Gender:", ["All"] + unique_genders)
+            else:
+                st.sidebar.radio("Filter by Gender:", ["All"] + unique_genders, disabled=True)
+                selected_gender = "All"
+            
+            if selected_gender != "All":
+                df_analysis = df_analysis[df_analysis[gender_col] == selected_gender]
+    
+    # Show info about filter status
+    if not analysis_run:
+        st.sidebar.info("⚠️ Additional filters will be enabled after running topic analysis")
+    else:
+        st.sidebar.success("✅ Additional filters are now active")
+    
+    # Show filtered dataset info
+    st.info(f"📊 Analysis based on: {len(df_analysis)} reviews (after all filters)")
+    
+    # Adaptive parameters based on dataset size
+    if dataset_size < 50:
+        n_topics = min(3, dataset_size // 5)  # Fewer topics for small datasets
+        min_topic_size = max(2, dataset_size // 10)  # Smaller minimum topic size
+        st.info(f"Small dataset detected ({dataset_size} reviews). Using {n_topics} topics with min_topic_size={min_topic_size}")
+    else:
+        n_topics = 5
+        min_topic_size = 10
+    
+    # THE REST OF YOUR ORIGINAL TOPIC ANALYSIS CODE CONTINUES HERE...
+    if button_clicked:
         with st.spinner("Creating topic model..."):
             # Get text data
             texts = df_filtered[reviews_col].astype(str).tolist()
@@ -372,14 +458,11 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 return
             
             # Create BERTopic model with adaptive parameters and pre-computed embeddings
-
-
             vectorizer_model = CountVectorizer(
                 stop_words="english",
                 ngram_range=(1, 2)
             )
 
-            
             topic_model = BERTopic(
                 embedding_model=None,
                 vectorizer_model=vectorizer_model,
@@ -810,7 +893,15 @@ def main():
     if 'page' not in st.session_state:
         st.session_state.page = "Data Viewer"
     
-    # Create navigation buttons with custom styling
+    # Reset analysis state when changing pages
+    if 'previous_page' not in st.session_state:
+        st.session_state.previous_page = st.session_state.page
+    
+    if st.session_state.previous_page != st.session_state.page:
+        st.session_state.analysis_run = False
+        st.session_state.previous_page = st.session_state.page
+    
+    # Create navigation buttons
     st.sidebar.markdown("""
     <style>
     .stButton button {
@@ -828,9 +919,11 @@ def main():
     
     if st.sidebar.button("Data Viewer", use_container_width=True):
         st.session_state.page = "Data Viewer"
+        st.session_state.analysis_run = False
     
     if st.sidebar.button("Topic Analysis", use_container_width=True):
         st.session_state.page = "Topic Analysis"
+        st.session_state.analysis_run = False
 
     # Load embedding data once
     embedding_data = load_embeddings()
@@ -850,102 +943,44 @@ def main():
         df_clean = df[df[reviews_col].notna()].copy()
         df_clean = df_clean[df_clean[reviews_col].astype(str).str.strip() != '']
         
-        # Sidebar Filters
+        # Sidebar Filters - ONLY DRUG FILTER NOW
         st.sidebar.subheader("Filters")
         filters = {}
-        selected_drugs = []  # Initialize selected_drugs
+        selected_drugs = []
         
-        # Drug filter - Multi selector
         # Drug filter - Multi selector
         drug_cols = [col for col in ['Drug', 'drug', 'drugName', 'drug_name'] if col in df_clean.columns]
         if drug_cols:
             drug_col = drug_cols[0]
-            # Remove empty/NaN values and get unique drugs
             unique_drugs = sorted([drug for drug in df_clean[drug_col].dropna().unique() if str(drug).strip() != ''])
             
             if len(unique_drugs) > 0:
-                # Add "All" option at the top
                 drug_options = ["All"] + unique_drugs
                 
                 selected_drugs = st.sidebar.multiselect(
                     "Select Drugs: *Required for Topic Analysis*",
                     drug_options,
-                    default=["All"],  # Default to All
+                    default=["All"],
                     help="You must select at least one drug to perform topic analysis"
                 )
                 
-                # If "All" is selected, treat it as all drugs
                 if "All" in selected_drugs:
                     selected_drugs = unique_drugs
 
                 if selected_drugs:
                     filters[drug_col] = selected_drugs
-
         
-        # Age filter - Multi selector
-        if 'Age' in df_clean.columns or 'age' in df_clean.columns:
-            age_col = 'Age' if 'Age' in df_clean.columns else 'age'
-            # Remove empty/NaN values and get unique ages
-            unique_ages = sorted([age for age in df_clean[age_col].dropna().unique() if str(age).strip() != ''])
-            if len(unique_ages) > 0:
-                selected_ages = st.sidebar.multiselect(
-                    "Select Ages:",
-                    unique_ages,
-                    default=[]
-                )
-                if selected_ages:
-                    filters[age_col] = selected_ages
-        
-        # Satisfaction filter - Slider with range 1-5
-        if 'Satisfaction' in df_clean.columns or 'satisfaction' in df_clean.columns:
-            sat_col = 'Satisfaction' if 'Satisfaction' in df_clean.columns else 'satisfaction'
-            
-            # Convert satisfaction column to numeric, handling any non-numeric values
-            df_clean[sat_col] = pd.to_numeric(df_clean[sat_col], errors='coerce')
-            
-            # Get the range of satisfaction values (should be 1-5)
-            min_sat = df_clean[sat_col].min()
-            max_sat = df_clean[sat_col].max()
-            
-            # Create slider for satisfaction range
-            sat_range = st.sidebar.slider(
-                "Select Satisfaction Range:",
-                min_value=int(min_sat) if not pd.isna(min_sat) else 1,
-                max_value=int(max_sat) if not pd.isna(max_sat) else 5,
-                value=(int(min_sat) if not pd.isna(min_sat) else 1, int(max_sat) if not pd.isna(max_sat) else 5),
-                step=1
-            )
-            
-            # Filter based on the selected range
-            filters[sat_col] = list(range(sat_range[0], sat_range[1] + 1))
-        
-        # Gender filter - Radio buttons
-        gender_cols = [col for col in ['Gender', 'gender', 'Sex', 'sex'] if col in df_clean.columns]
-        if gender_cols:
-            gender_col = gender_cols[0]
-            # Remove empty/NaN values and get unique genders
-            unique_genders = sorted([gender for gender in df_clean[gender_col].dropna().unique() if str(gender).strip() != ''])
-            if len(unique_genders) > 0:
-                # Add "All" option to the beginning
-                gender_options = ["All"] + list(unique_genders)
-                selected_gender = st.sidebar.radio(
-                    "Select Gender:",
-                    gender_options
-                )
-                if selected_gender != "All":
-                    filters[gender_col] = [selected_gender]
-        
-        # Apply filters
+        # Apply ONLY drug filter for both pages
         if filters:
             df_filtered = get_filtered_data(df_clean, filters)
-            st.sidebar.info(f"Filtered data: {len(df_filtered)} reviews (for Topic Analysis)")
+            st.sidebar.info(f"Filtered data: {len(df_filtered)} reviews")
         else:
             df_filtered = df_clean
             st.sidebar.info(f"Total data: {len(df_filtered)} reviews")
         
         # Display the appropriate page based on selection
         if st.session_state.page == "Data Viewer":
-            data_viewer_page(df_clean)
+            data_viewer_page(df_clean)  # Show UNFILTERED data for Data Viewer
         elif st.session_state.page == "Topic Analysis":
             topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embedding_data)
 
