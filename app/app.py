@@ -19,7 +19,7 @@ from openai import OpenAI
 from pathlib import Path
 import pickle
 
-from streamlit_plotly_events import plotly_events
+#from streamlit_plotly_events import plotly_events
 
 
 warnings.filterwarnings('ignore')
