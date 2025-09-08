@@ -11,3 +11,4 @@ bertopic==0.17.3
 Pillow==11.3.0
 openai==1.99.9
 python-dotenv==1.0.1
+streamlit-plotly-events2==0.0.7

@@ -18,6 +18,10 @@ import openai
 from openai import OpenAI
 from pathlib import Path
 import pickle
+
+from streamlit_plotly_events import plotly_events
+
+
 warnings.filterwarnings('ignore')
 
 # Load environment variables from .env file
@@ -368,24 +372,10 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 return
             
             # Create BERTopic model with adaptive parameters and pre-computed embeddings
-            if dataset_size < 50:
-                min_df = 1
-                max_df = 1.0
-            else:
-                min_df = max(1, dataset_size // 100)  # ~1% of docs
-                max_df = 0.95
-
-            # 🔥 Safety check: make sure max_df isn't smaller than min_df
-            if isinstance(max_df, float):
-                max_doc_count = int(max_df * dataset_size)
-                if max_doc_count < min_df:
-                    max_df = 1.0  # allow all terms if conflict
 
 
             vectorizer_model = CountVectorizer(
                 stop_words="english",
-                min_df=min_df,
-                max_df=max_df,
                 ngram_range=(1, 2)
             )
 
@@ -478,6 +468,8 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
     with col2:
         show_reviews = st.checkbox("Show reviews on click", value=True)
     
+    # viz_type = st.selectbox("Visualization Type:", ["2D Plot", "3D Plot"])
+
     # Create visualizations
     if viz_type == "2D Plot":
         try:
@@ -495,7 +487,7 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 'y': reduced_embeddings[:, 1],
                 'topic': topics,
                 'topic_name': df_with_topics['topic_name'],
-                'text': df_with_topics[reviews_col].str[:100] + "..."
+                'text': df_with_topics[reviews_col]  # Full text
             })
             
             # Remove outlier topic (-1) for cleaner visualization
@@ -505,34 +497,53 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
                 st.warning("No valid topics found for visualization. All data points are outliers.")
                 return
             
-            # Create interactive plot
-            fig = px.scatter(
-                plot_df,
-                x='x',
-                y='y',
-                color='topic_name',
-                hover_data={'text': True, 'x': False, 'y': False},
-                title="Topic Clusters (2D Visualization)",
-                labels={'x': 'Component 1', 'y': 'Component 2', 'color': 'Topic'}
+            # Create interactive plot with FULL TEXT on hover
+            fig = go.Figure()
+            
+            # Add each topic as a separate trace to ensure proper hover handling
+            for topic_name in plot_df['topic_name'].unique():
+                topic_data = plot_df[plot_df['topic_name'] == topic_name]
+                
+                fig.add_trace(go.Scatter(
+                    x=topic_data['x'],
+                    y=topic_data['y'],
+                    mode='markers',
+                    name=topic_name,
+                    text=topic_data['text'],  # Full text for hover
+                    hoverinfo='text',
+                    hovertemplate='<b>Topic:</b> ' + topic_name + 
+                                '<br><b>Review:</b> %{text}' +
+                                '<extra></extra>',
+                    marker=dict(size=12, opacity=0.7)
+                ))
+                # fig.add_trace(go.Scatter(
+                #     x=topic_data['x'],
+                #     y=topic_data['y'],
+                #     mode='markers',
+                #     name=topic_name,
+                #     customdata=topic_data['text'],  # full text here
+                #     hovertemplate='<b>Topic:</b> ' + topic_name +
+                #                 '<br><b>Review:</b> %{customdata}<extra></extra>',
+                #     marker=dict(size=8, opacity=0.7)
+                # ))
+
+            fig.update_layout(
+                title="Topic Clusters (2D Visualization) - Hover to see full reviews",
+                xaxis_title="Component 1",
+                yaxis_title="Component 2",
+                showlegend=True
             )
-            fig.update_traces(marker=dict(size=8, opacity=0.7))
-            
+
+
+ 
+########################################3            
             # Display plot
-            event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+            st.plotly_chart(fig, use_container_width=True)
             
-            # Show reviews when point is clicked
-            if show_reviews and event and 'selection' in event and event['selection']['points']:
-                selected_point = event['selection']['points'][0]
-                if 'customdata' in selected_point:
-                    # Find the topic of selected point
-                    point_index = selected_point['pointIndex']
-                    selected_topic_name = plot_df.iloc[point_index]['topic_name']
-                    show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
-        
         except Exception as e:
             st.error(f"Error creating 2D visualization: {str(e)}")
             st.info("This might be due to the dataset being too small or sparse. Try selecting more data.")
-    
+            
     elif viz_type == "3D Plot":
         try:
             # Use pre-computed embeddings for visualization
@@ -584,20 +595,11 @@ def topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embed
             )
             
             # Display plot
-            event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+            st.plotly_chart(fig, use_container_width=True)
             
-            # Show reviews when point is clicked
-            if show_reviews and event and 'selection' in event and event['selection']['points']:
-                selected_point = event['selection']['points'][0]
-                if 'customdata' in selected_point:
-                    point_index = selected_point['pointIndex']
-                    selected_topic_name = plot_df.iloc[point_index]['topic_name']
-                    show_topic_reviews(df_with_topics, selected_topic_name, reviews_col, 5)
-        
         except Exception as e:
             st.error(f"Error creating 3D visualization: {str(e)}")
-            st.info("This might be due to the dataset being too small or sparse. Try selecting more data.")
-    
+            st.info("This might be due to the dataset being too small or sparse. Try selecting more data.")    
     # Topic distribution charts
     st.subheader("Topic Distribution")
     
@@ -936,14 +938,14 @@ def main():
         # Apply filters
         if filters:
             df_filtered = get_filtered_data(df_clean, filters)
-            st.sidebar.info(f"Filtered data: {len(df_filtered)} reviews")
+            st.sidebar.info(f"Filtered data: {len(df_filtered)} reviews (for Topic Analysis)")
         else:
             df_filtered = df_clean
             st.sidebar.info(f"Total data: {len(df_filtered)} reviews")
         
         # Display the appropriate page based on selection
         if st.session_state.page == "Data Viewer":
-            data_viewer_page(df_filtered)
+            data_viewer_page(df_clean)
         elif st.session_state.page == "Topic Analysis":
             topic_analysis_page(df_filtered, reviews_col, filters, selected_drugs, embedding_data)
 
